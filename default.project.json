@@ -1,0 +1,15 @@
+{
+  "name": "ReBenchmark",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "ReBenchmark": {
+        "$path": "src"
+      },
+      "Benchmarks": {
+        "$path": "tests/Benchmarks"
+      }
+    }
+  }
+}
