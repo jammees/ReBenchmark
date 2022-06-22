@@ -1,43 +1,34 @@
 # ReBenchmark
-An easy to use super lite benchmarking module for ROBLOX!
-
-Took some ideas from Fusion's benchmarks.
+An easy-to-use and light-weight benchmarking module with lots of features!
 
 # API:
 
-## ReBenchmark.BenchModules(table)
+## Utility functions to run benchmark modules:
+
+### ReBenchmark.Run( {[number]: ModuleScript} )
 
 Benchmarks all of the modules provided in a table
 
 Example of how a benchmarking module looks like:
 
 ```lua
-return {
-    atStart = function()
-        print("Benchmarking started...")
-    end,
-
-    atEnd = function()
-        print("Finished benchmarking!")
-    end,
-
-    ["Print `Hello world` to console 50 times"] = {
-        before = function()
-            -- do something to prepare for run
-            return "Hello world"
-        end,
-
-        calls = 50,
-
-        run = function(context)
-            print(context[1])
-        end,
-
-        after = function()
-            -- do something to clean the run function up
-        end
-    }
-}
+return function(Benchmark)
+	Benchmark({
+		["rename folder to Test"] = function(folder: Folder)
+			folder.Name = "Test"
+		end,
+	})
+		:Function(function()
+			print("Started benchmarking")
+		end)
+		:BeforeEach({
+			["rename folder to Test"] = function(self)
+				return self:Flag(Instance.new("Folder", workspace))
+			end,
+		})
+		:TimeOut(5)
+		:Run(10)
+end
 ```
 
 How to benchmark it:
@@ -47,30 +38,89 @@ local ReBenchmark = require(game:GetService("ReplicatedStorage").ReBenchmark)
 ReBenchmark.BenchModules({path.to.my.module})
 ```
 
-## ReBenchmark.BenchFunction(run, calls, before, after)
+### ReBenchmark.AutoBench()
 
-Benchmarks a single function.
+Scans trough the entire game looking for `.bench` or `.rebench` modules to run them.
 
-```lua
-local ReBenchmark = require(game:GetService("ReplicatedStorage").ReBenchmark)
-
-ReBenchmark.BenchFunction(function(context)
-    print(context[1])
-end, 15, function()
-    print("Before")
-    return "Hello world"
-end, function()
-    print("After")
-end)
-```
-
-## ReBenchmark.BenchAuto()
-
-Gets all the modules ending with `.rebench` and `.bench` and then benchmarks them.
-
-Example:
+After the benchmark finished it will automatically report the results into the console.
 
 ```lua
 local ReBenchmark = require(game:GetService("ReplicatedStorage").ReBenchmark)
-ReBenchmark.BenchAuto()
+ReBenchmark.AutoBench()
 ```
+
+# In benchmark modules:
+
+### ReBenchmark:TimeOut(seconds)
+
+Sets a timeout for the given benchmark module.
+
+### ReBenchmark:Flag(object)
+
+Adds the object to Janitor for later to get cleaned up.
+
+This can be automated by doing :Run(MY_NUMBER, true)
+
+### ReBenchmark:Run(cycles, autoFlag)
+
+Runs the provided functions certain amount of times.
+If not provided it will default to 500 cycles
+
+Second parameter is optional.
+AutoFlag cleans up every instance that was returned by the :BeforeEach() functions.
+
+### ReBenchmark:Function(callback)
+
+Runs the provided function.
+Useful for preparing the benchmark, or to clean it up.
+
+### ReBenchmark:BeforeEach(table)
+
+Hook a function to be run before the specified benchmark.
+Variables that are returned by the pre ran function get passed to the benchmark function!
+
+If in the :Run method after the cycles AutoFlag is not enabled, ReBench will pass it self into the function, 
+so :Flag can be used!
+    
+```lua
+return function(Benchmark)
+    Benchmark({
+        ["rename folder to Test"] = function(folder: Folder)
+            folder.Name = "Test"
+        end,
+    })
+        :BeforeEach({
+            ["rename folder to Test"] = function(self)
+                return self:Flag(Instance.new("Folder", workspace))
+            end,
+        })
+        :Run(10)
+end
+```
+
+### ReBenchmark:ToConsole(method)
+
+Prints out the results into the output.
+
+If needed a function can be passed into the method to later be used to log the results.
+If not present it will default to `print`.
+
+```lua
+return function(Benchmark)
+    Benchmark({
+        ["rename folder to Test"] = function(folder: Folder)
+            folder.Name = "Test"
+        end,
+    })
+        :BeforeEach({
+            ["rename folder to Test"] = function(self)
+                return self:Flag(Instance.new("Folder", workspace))
+            end,
+        })
+        :Run(10):ToConsole(warn)
+end
+```
+
+### ReBenchmark:ReturnResults()
+
+Returns the results of the benchmarks.
