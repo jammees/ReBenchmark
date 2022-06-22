@@ -1,259 +1,344 @@
 --[[
-	ReBenchmark
-	An easy to use and super light benchmarking module.
+	ReBench
+	
+	An easy-to-use and light-weight benchmarking module with lots of features!
 
-	Version: 0.1.1
-	Created by: james_mc98
-	Last update: 2022-06-07
+	Version: 0.3.0
+	Last updated: 2022/06/22
 
-	Notice: Using ReBench.BenchAuto requires that all the benchmarking modules end with .rebench or .bench
+	Credits:
+	Lightlimn - Timer module
+	Validark - Janitor module
+
 ]]
 
-local Reporter = {}
-Reporter.StartModule = "\nBenchmark module results:\n"
-Reporter.StartFunction = "\nBenchmark function result:\n"
-Reporter.Tree = "\t[%s]:\n"
-Reporter.Result = "\t\t- %s: %s\n"
-Reporter.ResultFunction = "\t- %s: %s\n"
+type class = any
 
-function Reporter.ModuleReport(benchResults: { [string]: { [string]: any } })
-	local report = Reporter.StartModule
+type results = { [string]: { [string]: number } }
 
-	for treeName, treeResults in pairs(benchResults) do
-		report = report .. string.format(Reporter.Tree, treeName)
-		for resultName, resultValue in pairs(treeResults) do
-			report = report .. string.format(Reporter.Result, resultName, tostring(resultValue))
-		end
-	end
+type flagToDestroy = (any) -> ()
 
-	print(report)
+local DEFAULT_CYCLES = 500
+local ALLOWED_TYPES_TO_FLAGGED = {
+	"function",
+	"table",
+	"thread",
+	"Instance",
+}
+
+local Score = require(script.Score)
+local Janitor = require(script.Janitor)
+local Timer = require(script.Timer)
+
+local ReBench = {}
+ReBench.__index = ReBench
+
+--[=[
+	Creates a new ReBench class.
+]=]
+function ReBench.new(functions: { [string]: (any) -> () }): class
+	return setmetatable({
+		_functions = functions,
+		_beforeEachFunctions = nil,
+		_cycles = 0,
+
+		_resultGroup = nil,
+		_timeout = nil,
+		_results = {},
+		_cyclesAmount = {},
+
+		_janitor = Janitor.new(),
+		_timer = Timer.new(0),
+		_signalHandle = nil,
+		_isAbort = false,
+	}, ReBench)
 end
 
-function Reporter.FunctionReport(benchResult: { [string]: string })
-	local report = Reporter.StartFunction
-
-	for resultName, resultValue in pairs(benchResult) do
-		report = report .. string.format(Reporter.ResultFunction, resultName, tostring(resultValue))
-	end
-
-	print(report)
-end
-
-local Benchmarker = {}
-Benchmarker.DefaultCalls = 5
-Benchmarker.Decimals = 5
-
-function Benchmarker.SimplifyNumber(number: number): string
-	local dotSplit = string.split(tostring(number), ".")
-	return dotSplit[1] .. "." .. string.sub(dotSplit[2], 0, Benchmarker.Decimals)
-end
-
-function Benchmarker.CalculateData(times: { [number]: number }, calls: number): { [string]: string }
-	local avarageTime = 0
-	local shortestTime = math.huge
-	local longestTime = 0
-
-	-- avarage time
-	table.foreachi(times, function(_, b)
-		avarageTime += b
-	end)
-	avarageTime = avarageTime / calls
-
-	-- shortest time
-	for _, v in ipairs(times) do
-		if v < shortestTime then
-			shortestTime = v
-		end
-	end
-
-	-- longest time
-	for _, v in ipairs(times) do
-		if v > longestTime then
-			longestTime = v
-		end
-	end
-
-	return {
-		["Avarage time"] = Benchmarker.SimplifyNumber(avarageTime),
-		["Longest time"] = Benchmarker.SimplifyNumber(longestTime),
-		["Shortest time"] = Benchmarker.SimplifyNumber(shortestTime),
-	}
-end
-
-function Benchmarker.Module(benchmarkConfig: { any }): { [string]: { [string]: string } }
-	local benchResults = {}
-
-	if typeof(benchmarkConfig.atStart) == "function" then
-		benchmarkConfig.atStart()
-	end
-
-	for treeName, argument in pairs(benchmarkConfig) do
-		if typeof(argument) == "table" then
-			local beforeContext = {}
-
-			-- table for holding the results
-			local times = {}
-
-			for _ = 1, argument.calls or Benchmarker.DefaultCalls do
-				if typeof(argument.before) == "function" then
-					beforeContext = table.pack(argument.before())
-					beforeContext.n = nil
-				end
-
-				local startTime = tick()
-
-				argument.run(beforeContext)
-
-				local endTime = tick()
-
-				if typeof(argument.after) == "function" then
-					argument.after()
-				end
-
-				table.insert(times, endTime - startTime)
-			end
-
-			benchResults[treeName] = Benchmarker.CalculateData(times, argument.Calls or Benchmarker.DefaultCalls)
-		end
-	end
-
-	if typeof(benchmarkConfig.atEnd) == "function" then
-		benchmarkConfig.atEnd()
-	end
-
-	return benchResults
-end
-
-function Benchmarker.Function(
-	runCallback: ({ [number]: any }) -> (),
-	calls: number,
-	beforeCallback: () -> (any),
-	afterCallback: () -> ()
-): { [string]: { [string]: string } }
-	-- table for saving the returned values from the before function, to later pass it to run
-	local beforeContext = {}
-
-	-- table for holding the results
-	local times = {}
-
-	for _ = 1, calls or Benchmarker.DefaultCalls do
-		if typeof(beforeCallback) == "function" then
-			beforeContext = table.pack(beforeCallback())
-			beforeContext.n = nil
-		end
-
-		local startTime = tick()
-
-		runCallback(beforeContext)
-
-		local endTime = tick()
-
-		if typeof(afterCallback) == "function" then
-			afterCallback()
-		end
-
-		table.insert(times, endTime - startTime)
-	end
-
-	return Benchmarker.CalculateData(times, calls or Benchmarker.DefaultCalls)
-end
-
-local ReBenchmark = {}
-
---[[
-	Runs a benchmark on a list of modules
-
-	Returns the results
-
-	**Example**:
+--[=[
+	Requires all of the provided modules.
+	After finish, it will log all of the results.
 
 	```lua
-	local ReBenchmark = require(game:GetService("ReplicatedStorage").ReBench)
-
-	local benchmarkModules = {}
-
-	for _, v in ipairs(game:GetDescendants()) do
-		if v:IsA("ModuleScript") and v.Name:match(".spec$") then
-			table.insert(benchmarkModules, v)
-		end
-	end
-
-	ReBenchmark.BenchModules(benchmarkModules)
+	local ReBench = require(game:GetService("ReplicatedStorage").ReBench)
+	ReBench.Run({MyModule})
 	```
-]]
-function ReBenchmark.BenchModules(benchmarkModules: { [number]: ModuleScript })
-	local benchmarkResults = {}
+]=]
+function ReBench.Run(benchmarkModules: { [number]: ModuleScript })
+	Score.Group.ResetData()
 
 	for _, v in ipairs(benchmarkModules) do
-		local results = Benchmarker.Module(require(v))
-
-		for o, b in pairs(results) do
-			benchmarkResults[o] = b
-		end
+		require(v)(ReBench.new)
 	end
 
-	Reporter.ModuleReport(benchmarkResults)
-
-	return benchmarkResults
+	Score.Report(print, Score.Group.GetData())
 end
 
---[[
-	Benchmarks a single function. 
-
-	Returns the results.
-
-	**Example**:
+--[=[
+	Searches the whole game for `.bench` or `.rebench` modules to run them.
+	After it finished it will report all of the results in one go.
 
 	```lua
-	local ReBenchmark = require(game:GetService("ReplicatedStorage").ReBench)
-
-	ReBenchmark.BenchFunction(function(context)
-		print(context[1])
-	end, 15, function()
-		print("Before")
-		return "Hello world"
-	end, function()
-		print("After")
-	end)
+	local ReBench = require(game:GetService("ReplicatedStorage").ReBench)
+	ReBench.AutoBench()
 	```
-]]
-function ReBenchmark.BenchFunction(
-	runFunction: ({ [number]: any }) -> (),
-	calls: number,
-	beforeFunction: () -> (any),
-	afterFunction: () -> ()
-): { [string]: string }
-	local result = Benchmarker.Function(runFunction, calls, beforeFunction, afterFunction)
 
-	Reporter.FunctionReport(result)
-
-	return result
-end
-
---[[
-	Scans trough the entire game, looking for benchmarking modules.
-
-	All benchmarking modules **must end with**: `.rebench` or .`bench`.
-
-	Returns the results.
-
-	**Example**:
+	How a `.bench` file looks like:
 
 	```lua
-	local ReBenchmark = require(game:GetService("ReplicatedStorage").ReBench)
-	ReBenchmark.BenchAuto()
+	return function(Benchmark)
+		Benchmark({
+			["Print Hello world! to console"] = function()
+				print("Hello world!")
+			end,
+
+			["Warn Hello world! to console"] = function()
+				warn("Hello world!")
+			end,
+		}):Run(25)
+	end
 	```
-]]
-function ReBenchmark.BenchAuto()
-	local benchModules = {}
+]=]
+function ReBench.AutoBench(): { [number]: ModuleScript }
+	local requiredModules = {}
+
+	Score.Group.ResetData()
 
 	for _, v in ipairs(game:GetDescendants()) do
 		if v:IsA("ModuleScript") and v.Name:match(".rebench$") or v.Name:match(".bench$") then
-			table.insert(benchModules, v)
+			require(v)(ReBench.new)
+			table.insert(requiredModules, v)
 		end
 	end
 
-	ReBenchmark.BenchModules(benchModules)
+	Score.Report(print, Score.Group.GetData())
+
+	return requiredModules
 end
 
-return ReBenchmark
+--[=[
+	Sets a timeout for all of the benchmarks, to prevent them to run too long.
+]=]
+function ReBench:TimeOut(seconds: number): class
+	assert(typeof(seconds) == "number", "Expected number, got;" .. typeof(seconds))
+
+	self._timeout = seconds
+
+	return self
+end
+
+--[=[
+	Flags an object to get cleaned up after the benchmark finished.
+]=]
+function ReBench:Flag(object: any): any
+	if not table.find(ALLOWED_TYPES_TO_FLAGGED, typeof(object)) then
+		return warn("Attempted to flag an object that can't be cleaned up!")
+	end
+
+	self._janitor:Add(object)
+	return object
+end
+
+--[=[
+	Runs the provided functions certain amount of times.
+	If not provided it will default to 500 cycles
+
+	@arg cycles number
+	@arg autoFlag boolean {optional}
+
+	AutoFlag cleans up every instance that was returned by the :BeforeEach() functions.
+]=]
+function ReBench:Run(cycles: number, autoFlag: boolean): class
+	assert(typeof(cycles) == "number", "Expected number, got;" .. typeof(cycles))
+
+	local localResults = { All = 0 }
+	self._cycles = cycles or DEFAULT_CYCLES
+	self._results = {}
+
+	-- if there is a timeout set, setup Sleitnick's timer module
+	if self._timeout and self._timeout > 0 then
+		self._timer.Duration = self._timeout
+
+		self._signalHandle = self._timer.Completed:Connect(function()
+			self._isAbort = true
+			self._timer:Stop()
+		end)
+	end
+
+	-- start the good stuff :)
+	for label, callback in pairs(self._functions) do
+		-- initialize a cycle holder
+		self._cyclesAmount[label] = {
+			Current = 0,
+			Max = cycles,
+		}
+
+		-- reset timer
+		if self._timeout and self._timeout > 0 then
+			self._timer:Stop()
+		end
+
+		-- reset stuffs
+		localResults = { All = 0, TimedOut = false }
+		local beforeFunction = nil
+		local context = {}
+
+		if typeof(self._beforeEachFunctions) == "table" then
+			if self._beforeEachFunctions[label] then
+				beforeFunction = self._beforeEachFunctions[label]
+			end
+		end
+
+		for i = 1, self._cycles do
+			if self._isAbort then
+				--[[ warn(
+					("Benchmark timed out; %s (%d/%d cycles | %s %%) with %d second(s)"):format(
+						label,
+						self._cyclesAmount[label],
+						self._cycles,
+						("%0.1f"):format((self._cyclesAmount[label] / self._cycles) * 100),
+						self._timer.Duration
+					)
+				) *]]
+
+				localResults.TimedOut = true
+				localResults.TimeOutSeconds = self._timeout
+
+				self._isAbort = false
+
+				break
+			end
+
+			if typeof(beforeFunction) == "function" then
+				context = table.pack(beforeFunction(not autoFlag and self or nil))
+				context.n = nil
+
+				if autoFlag then
+					for _, v in ipairs(context) do
+						if table.find(ALLOWED_TYPES_TO_FLAGGED, typeof(v)) then
+							self:Flag(v)
+						end
+					end
+				end
+			end
+
+			if self._timeout and self._timeout > 0 then
+				self._timer:Start()
+			end
+
+			local startTime = os.clock()
+
+			callback(table.unpack(context))
+
+			local endTime = os.clock()
+
+			if self._timeout and self._timeout > 0 then
+				self._timer:Pause()
+			end
+
+			table.insert(localResults, endTime - startTime)
+			localResults["All"] += endTime - startTime
+
+			self._cyclesAmount[label].Current = i
+		end
+
+		local localIndex = {
+			Name = label,
+			IsTimedOut = localResults.TimedOut,
+			TimeOutLimit = self._timeout,
+		}
+
+		self._results[localIndex] = Score.CalculateScore(localResults, self._cyclesAmount[label].Current)
+		Score.Group.SaveData(localIndex, self._results[localIndex], self._cyclesAmount[label])
+	end
+
+	localResults = {}
+	if self._timeout then
+		self._timer:Stop()
+		self._signalHandle:Disconnect()
+	end
+
+	-- cleanup flagged objects;
+	self._janitor:Cleanup()
+
+	return self
+end
+
+--[=[
+	Runs a function, that can be chained together with the rest of the methods.
+	Useful for preparing to benchmark.
+]=]
+function ReBench:Function(callback: () -> ()): class
+	assert(typeof(callback) == "function", "Expected function, got;" .. typeof(callback))
+
+	callback()
+
+	return self
+end
+
+--[=[
+	Hook a function to be run before the specified benchmark.
+	Variables that are returned by the pre ran function get passed to the benchmark function!
+
+	If in the :Run method after the cycles AutoFlag is not enabled, ReBench will pass it self into the function, 
+	so :Flag can be used!
+		
+	```lua
+	return function(Benchmark)
+		Benchmark({
+			["rename folder to Test"] = function(folder: Folder)
+				folder.Name = "Test"
+			end,
+		})
+			:BeforeEach({
+				["rename folder to Test"] = function(self)
+					return self:Flag(Instance.new("Folder", workspace))
+				end,
+			})
+			:Run(10)
+	end
+	```
+]=]
+function ReBench:BeforeEach(functions: { [string]: (flagToDestroy) -> (any) }): class
+	assert(typeof(functions) == "table", "Expected function, got;" .. typeof(functions))
+
+	self._beforeEachFunctions = functions
+
+	return self
+end
+
+--[=[
+	Prints out the results into the output.
+
+	If needed a function can be passed into the method to later be used to log the results.
+	If not present it will default to `print`.
+
+	```lua
+	return function(Benchmark)
+		Benchmark({
+			["rename folder to Test"] = function(folder: Folder)
+				folder.Name = "Test"
+			end,
+		})
+			:BeforeEach({
+				["rename folder to Test"] = function(self)
+					return self:Flag(Instance.new("Folder", workspace))
+				end,
+			})
+			:Run(10):ToConsole(warn)
+	end
+	```
+]=]
+function ReBench:ToConsole(method): class
+	Score.Report(typeof(method) == "function" and method or print, self._results, self._cyclesAmount)
+
+	return self
+end
+
+--[=[
+	Returns the results.
+]=]
+function ReBench:ReturnResults(): results
+	return self._results
+end
+
+return ReBench
